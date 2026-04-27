@@ -1,0 +1,44 @@
+{
+  "name": "lms-backend",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch-path=src --watch src/server.js",
+    "start": "node src/server.js",
+    "worker": "node src/worker.js",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "check:pg": "node scripts/check-pg.js",
+    "seed:samples": "node scripts/seed-sample-courses.js",
+    "reset-seed-password": "node scripts/reset-seed-staff-password.js",
+    "mudar:bootstrap-tenant": "node scripts/mudar-bootstrap-tenant.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "prisma": "5.22.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.758.0",
+    "@aws-sdk/s3-request-presigner": "^3.758.0",
+    "@prisma/client": "^5.22.0",
+    "archiver": "^7.0.1",
+    "bcryptjs": "^2.4.3",
+    "bullmq": "^5.34.10",
+    "cloudinary": "^2.5.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "ioredis": "^5.6.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "pg": "^8.14.1",
+    "sequelize": "^6.37.7",
+    "socket.io": "^4.8.1",
+    "uuid": "^11.0.5"
+  }
+}

@@ -1,0 +1,487 @@
+// PostgreSQL — LMS backend (migrated from MongoDB)
+// Run: npx prisma migrate dev && npx prisma generate
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// MUDAR SaaS extends LMS roles. New values appended for safe PostgreSQL enum migrations.
+enum UserRole {
+  super_admin
+  instructor
+  teacher
+  doctor
+  assistant
+  student
+  mudar_super_admin
+  client_super_admin
+  parent
+}
+
+enum TenantStatus {
+  trial
+  active
+  suspended
+}
+
+enum CourseStatus {
+  draft
+  active
+  archived
+}
+
+enum SubLessonType {
+  video
+  pdf
+  doc
+  image
+}
+
+enum AssessmentType {
+  quiz
+  exam
+  homework
+}
+
+enum SubmissionStatus {
+  not_started
+  in_progress
+  submitted
+  graded
+}
+
+enum NotificationStatus {
+  queued
+  sent
+  delivered
+  read
+  failed
+}
+
+enum LiveSessionStatus {
+  scheduled
+  live
+  completed
+  cancelled
+}
+
+enum TransactionStatus {
+  pending
+  paid
+  failed
+  refunded
+}
+
+enum AgentSessionStatus {
+  active
+  terminated
+  expired
+}
+
+enum PromoDiscountType {
+  percent
+  fixed
+}
+
+model SubscriptionPlan {
+  id          String   @id @default(uuid()) @db.Uuid
+  slug        String   @unique
+  name        String
+  maxTeachers Int      @default(10)
+  maxStudents Int      @default(500)
+  maxCourses  Int      @default(50)
+  features    Json     @default("{}")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  tenants Tenant[]
+}
+
+model Tenant {
+  id        String       @id @default(uuid()) @db.Uuid
+  slug      String       @unique
+  name      String
+  status    TenantStatus @default(active)
+  planId    String?      @db.Uuid
+  branding  Json         @default("{}")
+  settings  Json         @default("{}")
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  plan    SubscriptionPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
+  users   User[]
+  courses Course[]
+  lessons Lesson[]
+  subLessons SubLesson[]
+  assessments Assessment[]
+  submissions Submission[]
+  progresses Progress[]
+  notifications Notification[]
+  messages Message[]
+  liveSessions LiveSession[]
+  transactions Transaction[]
+  packages Package[]
+  promoCodes PromoCode[]
+  agentSessions AgentSession[]
+  courseEnrollments CourseEnrollment[]
+  courseAssistants CourseAssistant[]
+  userAssignedCourses UserAssignedCourse[]
+}
+
+model User {
+  id                   String    @id @default(uuid()) @db.Uuid
+  role                 UserRole
+  tenantId             String?   @db.Uuid
+  name                 String?
+  phone                String?
+  email                String?
+  passwordHash         String?
+  parentName           String?
+  parentPhone          String?
+  deviceFingerprints   String[]  @default([])
+  packageId            String?   @db.Uuid
+  packageExpiry        DateTime?
+  ownedBy              String?   @db.Uuid
+  instructorPortfolio  Json?
+  fcmToken             String?
+  lastLogin            DateTime?
+  createdAt            DateTime  @default(now())
+
+  tenant               Tenant?   @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  package              Package?  @relation(fields: [packageId], references: [id])
+  owner                User?     @relation("UserOwnedUsers", fields: [ownedBy], references: [id])
+  ownedUsers           User[]    @relation("UserOwnedUsers")
+  teachingCourses      Course[]  @relation("CourseOwner")
+  assignedCourseLinks  UserAssignedCourse[]
+  enrollments          CourseEnrollment[] @relation("EnrollmentStudent")
+  submissions          Submission[]
+  notifications        Notification[]
+  sentMessages         Message[] @relation("MessageSender")
+  receivedMessages     Message[] @relation("MessageReceiver")
+  hostedSessions       LiveSession[]
+  transactions         Transaction[]
+  agentSessions        AgentSession[]
+  gradedSubmissions    Submission[] @relation("SubmissionGradedBy")
+  courseAssistants     CourseAssistant[]
+  progressRecords      Progress[]
+
+  @@unique([tenantId, email])
+  @@unique([tenantId, phone])
+}
+
+model UserAssignedCourse {
+  userId   String @db.Uuid
+  courseId String @db.Uuid
+  tenantId String? @db.Uuid
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@id([userId, courseId])
+}
+
+model Package {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String?  @db.Uuid
+  name         String
+  price        Decimal  @db.Decimal(14, 2)
+  lessonCount  Int      @default(0)
+  durationDays Int      @default(30)
+  features     String[] @default([])
+  active       Boolean  @default(true)
+  featured     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  users        User[]
+  transactions Transaction[]
+}
+
+model Course {
+  id                   String        @id @default(uuid()) @db.Uuid
+  tenantId             String?       @db.Uuid
+  /// MUDAR: product term "classroom"; this row is the classroom record.
+  kind                 String        @default("classroom")
+  ownerId              String        @db.Uuid
+  ownerRole            String
+  title                String
+  category             String?
+  description          String?
+  coverImage           String?
+  galleryImages        String[]      @default([])
+  passingScoreDefault  Int           @default(60)
+  language             String[]      @default([])
+  maxStudents          Int           @default(0)
+  certificateEnabled   Boolean       @default(false)
+  price                Decimal       @db.Decimal(14, 2) @default(0)
+  currency             String        @default("EGP")
+  status               CourseStatus  @default(draft)
+  packageIds           String[]      @default([])
+  lessonIds            String[]      @default([])
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  tenant               Tenant?       @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  owner                User          @relation("CourseOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  enrollments          CourseEnrollment[]
+  assistants           CourseAssistant[]
+  assignedUserLinks    UserAssignedCourse[]
+  lessons              Lesson[]
+  subLessons           SubLesson[]
+  assessments          Assessment[]
+  submissions          Submission[]
+  progressRecords      Progress[]
+  messages             Message[]
+  liveSessions         LiveSession[]
+  transactions         Transaction[]
+}
+
+model CourseEnrollment {
+  courseId  String   @db.Uuid
+  studentId String   @db.Uuid
+  tenantId  String?  @db.Uuid
+  createdAt DateTime @default(now())
+
+  course    Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  student   User   @relation("EnrollmentStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  tenant    Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@id([courseId, studentId])
+}
+
+model CourseAssistant {
+  courseId    String   @db.Uuid
+  userId      String   @db.Uuid
+  tenantId    String?  @db.Uuid
+  permissions String[] @default([])
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@id([courseId, userId])
+}
+
+model Lesson {
+  id           String   @id @default(uuid()) @db.Uuid
+  courseId     String   @db.Uuid
+  tenantId     String?  @db.Uuid
+  title        String
+  order        Int      @default(0)
+  description  String?
+  published    Boolean  @default(false)
+  subLessonIds String[] @default([])
+  createdAt    DateTime @default(now())
+
+  course     Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  tenant     Tenant?    @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  subLessons SubLesson[]
+}
+
+model SubLesson {
+  id                  String        @id @default(uuid()) @db.Uuid
+  lessonId            String        @db.Uuid
+  courseId            String        @db.Uuid
+  tenantId            String?       @db.Uuid
+  title               String
+  description         String?
+  order               Int           @default(0)
+  type                SubLessonType
+  cloudinaryAssetId   String?
+  cloudinaryPublicId  String?
+  fileUrl             String?
+  assessmentId        String?       @db.Uuid
+  published           Boolean       @default(false)
+  estimatedMinutes    Int           @default(0)
+  createdAt           DateTime      @default(now())
+
+  lesson      Lesson      @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  course      Course      @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  tenant      Tenant?     @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  assessments Assessment[]
+}
+
+model Assessment {
+  id                     String          @id @default(uuid()) @db.Uuid
+  subLessonId            String          @db.Uuid
+  courseId               String          @db.Uuid
+  tenantId               String?         @db.Uuid
+  label                  String?
+  type                   AssessmentType
+  questions              Json            @default("[]")
+  timerMinutes           Int             @default(0)
+  randomiseQuestions     Boolean         @default(false)
+  randomiseOptions       Boolean         @default(false)
+  maxAttempts            Int             @default(1)
+  showResultsImmediately Boolean         @default(true)
+  deadline               DateTime?
+  gradeWeight            Int             @default(1)
+  passingScore           Int             @default(60)
+  passage                String?
+  fileUploadEnabled      Boolean         @default(false)
+  lateSubmissionAllowed  Boolean         @default(false)
+  published              Boolean         @default(false)
+  createdAt              DateTime        @default(now())
+
+  course       Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  subLesson    SubLesson    @relation(fields: [subLessonId], references: [id], onDelete: Cascade)
+  tenant       Tenant?      @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  submissions  Submission[]
+}
+
+model Submission {
+  id                 String           @id @default(uuid()) @db.Uuid
+  studentId          String           @db.Uuid
+  assessmentId       String           @db.Uuid
+  courseId           String           @db.Uuid
+  tenantId           String?          @db.Uuid
+  answers            Json             @default("[]")
+  uploadedFiles      Json             @default("[]")
+  score              Decimal?         @db.Decimal(8, 2)
+  isPassed           Boolean?
+  status             SubmissionStatus @default(not_started)
+  gradedById         String?          @db.Uuid
+  instructorFeedback String?
+  submittedAt        DateTime?
+  gradedAt           DateTime?
+  isLate             Boolean          @default(false)
+
+  student    User       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  course     Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  tenant     Tenant?    @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  gradedBy   User?      @relation("SubmissionGradedBy", fields: [gradedById], references: [id])
+}
+
+model Progress {
+  id                     String   @id @default(uuid()) @db.Uuid
+  studentId              String   @db.Uuid
+  courseId               String   @db.Uuid
+  tenantId               String?  @db.Uuid
+  completedSubLessonIds  String[] @default([])
+  lastAccessedAt         DateTime?
+  overallPercent         Float    @default(0)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  student User   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  tenant  Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@unique([studentId, courseId])
+}
+
+model Notification {
+  id        String              @id @default(uuid()) @db.Uuid
+  userId    String              @db.Uuid
+  tenantId  String?             @db.Uuid
+  type      String
+  payload   Json                @default("{}")
+  channel   String[]            @default([])
+  status    NotificationStatus  @default(queued)
+  createdAt DateTime            @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+}
+
+model Message {
+  id            String    @id @default(uuid()) @db.Uuid
+  senderId      String    @db.Uuid
+  receiverId    String?   @db.Uuid
+  courseId      String    @db.Uuid
+  tenantId      String?   @db.Uuid
+  content       String
+  attachmentUrl String?
+  readAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  sender   User   @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User?  @relation("MessageReceiver", fields: [receiverId], references: [id], onDelete: SetNull)
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+}
+
+model LiveSession {
+  id                   String            @id @default(uuid()) @db.Uuid
+  courseId             String            @db.Uuid
+  tenantId             String?           @db.Uuid
+  hostId               String            @db.Uuid
+  title                String
+  description          String?
+  scheduledAt          DateTime
+  durationMinutes      Int               @default(60)
+  maxParticipants      Int               @default(100)
+  status               LiveSessionStatus @default(scheduled)
+  vConnectRoomId       String?
+  hostUrl              String?
+  participantUrl       String?
+  recordingEnabled     Boolean           @default(false)
+  autoPublishRecording Boolean           @default(false)
+  recordingUrl         String?
+  remindersSent        String[]          @default([])
+  recurring            Json?
+  createdAt            DateTime          @default(now())
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  host   User   @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+}
+
+model Transaction {
+  id            String            @id @default(uuid()) @db.Uuid
+  studentId     String            @db.Uuid
+  packageId     String?           @db.Uuid
+  courseId      String?           @db.Uuid
+  tenantId      String?           @db.Uuid
+  amount        Decimal           @db.Decimal(14, 2)
+  promoCode     String?
+  promoDiscount Decimal           @db.Decimal(14, 2) @default(0)
+  paymobRef     String?
+  paymentMethod String?
+  status        TransactionStatus @default(pending)
+  createdAt     DateTime          @default(now())
+
+  student User    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  package Package? @relation(fields: [packageId], references: [id])
+  course  Course?  @relation(fields: [courseId], references: [id])
+  tenant  Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+}
+
+model PromoCode {
+  id            String            @id @default(uuid()) @db.Uuid
+  tenantId      String?           @db.Uuid
+  code          String
+  discountType  PromoDiscountType
+  discountValue Decimal           @db.Decimal(14, 2)
+  usageLimit    Int?
+  usageCount    Int               @default(0)
+  expiresAt     DateTime?
+  active        Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, code])
+}
+
+model AgentSession {
+  id                String             @id @default(uuid()) @db.Uuid
+  studentId         String             @db.Uuid
+  tenantId          String?            @db.Uuid
+  deviceFingerprint String
+  sessionToken      String             @unique
+  activeVideoId     String?
+  threats           Json               @default("[]")
+  heartbeatAt       DateTime?
+  status            AgentSessionStatus @default(active)
+  createdAt         DateTime           @default(now())
+
+  student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  tenant  Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+}
